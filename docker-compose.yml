@@ -1,0 +1,97 @@
+name: legalrag
+
+services:
+
+  # ── 1. NVIDIA Triton Inference Server ─────────────────────────────────────
+  triton:
+    image: nvcr.io/nvidia/tritonserver:24.04-py3
+    container_name: legalrag-triton
+    restart: unless-stopped
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./triton/model_repository:/models:ro
+      - ./data:/app/data
+    command: >
+      tritonserver
+      --model-repository=/models
+      --log-verbose=1
+      --log-info=true
+      --strict-model-config=false
+      --grpc-port=8001
+      --http-port=8000
+      --metrics-port=8002
+    ports:
+      - "8001:8001"   # gRPC (backend calls this)
+      - "8002:8002"   # Metrics / health
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/v2/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── 2. FastAPI Backend ────────────────────────────────────────────────────
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: legalrag-backend
+    restart: unless-stopped
+    depends_on:
+      triton:
+        condition: service_healthy
+    environment:
+      - TRITON_URL=triton:8001
+      - MODEL_PATH=/models/legal-minilm
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./data:/app/data
+      - ./models:/models
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # ── 3. React Frontend ─────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: legalrag-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  data:
+  models:

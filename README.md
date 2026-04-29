@@ -1,119 +1,263 @@
-# Chat UI Kit React
+# LegalMind — Document Q&A System
+### RAG + TinyLlama + FastAPI + React + NVIDIA Triton
 
-[![Actions Status](https://github.com/chatscope/chat-ui-kit-react/workflows/build/badge.svg)](https://github.com/chatscope/chat-ui-kit-react/actions) [![npm version](https://img.shields.io/npm/v/@chatscope/chat-ui-kit-react.svg?style=flat)](https://npmjs.com/@chatscope/chat-ui-kit-react) [![](https://img.shields.io/npm/l/@chatscope/chat-ui-kit-react?dummy=unused)](https://github.com/chatscope/chat-ui-kit-react/blob/master/LICENSE) [![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg?style=flat-square)](https://github.com/prettier/prettier) [![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release) [![Storybook](https://cdn.jsdelivr.net/gh/storybookjs/brand@master/badge/badge-storybook.svg)](https://chatscope.io/storybook/react/)
+<div align="center">
 
-Build your own chat UI with React components in a few minutes.  
-The Chat UI Kit from chatscope is an open source UI toolkit for developing web chat applications.
+![LegalMind Banner](https://img.shields.io/badge/LegalMind-RAG%20Legal%20Q%26A-c9a84c?style=for-the-badge&logo=scales)
+![CUDA](https://img.shields.io/badge/CUDA-12.1%2B-76b900?style=for-the-badge&logo=nvidia)
+![Python](https://img.shields.io/badge/Python-3.11-3776AB?style=for-the-badge&logo=python)
+![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=for-the-badge&logo=fastapi)
 
-Tired of struggling with sticky scrollbars, contenteditable, responsiveness, css hacks?  
-This kit is for you! [See all features](https://chatscope.io/features).
+</div>
 
-**Chat UI Kit brings you chat UI development at warp speed** 🚀
+## Overview
 
-## Demo
+**LegalMind** is an end-to-end, GPU-accelerated Document Q&A system built for the legal domain. It combines:
 
-- Full featured chat application: [https://demo.chatscope.io](https://demo.chatscope.io)
-- Zoe, Akane, Eliot and Joe: [https://chatscope.io/demo/chat-friends](https://chatscope.io/demo/chat-friends/)
-- Chat with the Martian (he is available sometimes): [https://mars.chatscope.io](https://mars.chatscope.io)
+- **Retrieval-Augmented Generation (RAG)** to ground LLM answers in uploaded documents
+- **NVIDIA Triton Inference Server** to serve the embedding model with GPU batching
+- **FAISS GPU** vector store for fast similarity search
+- **TinyLlama-1.1B-Chat** as the open-source LLM
+- **React + chatscope/chat-ui-kit-react** for a professional chat interface
+- **Fine-tuned `all-MiniLM-L6-v2`** on 480MB of legal text from Pile of Law
 
-Demos index: [https://chatscope.io/demo](https://chatscope.io/demo/).
+---
 
-## Install
+## Architecture
 
-**Component library**
-
-Using yarn:
-
-```sh
-yarn add @chatscope/chat-ui-kit-react
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Browser (React + chatscope)                                     │
+│  ┌────────────┐   ┌──────────────────────────────────────────┐  │
+│  │ Sidebar    │   │  ChatContainer                           │  │
+│  │ Doc Upload │   │  MessageList / MessageInput              │  │
+│  │ FAISS Stats│   │  Source Citation Chips                   │  │
+│  └────────────┘   └──────────────────────────────────────────┘  │
+└───────────────────────────┬──────────────────────────────────────┘
+                            │ HTTP / SSE
+┌───────────────────────────▼──────────────────────────────────────┐
+│  FastAPI Backend  (port 8000)                                    │
+│  /upload → chunk → Triton embed → FAISS add                     │
+│  /ask    → Triton embed → FAISS search → TinyLlama generate     │
+│  /ask/stream → SSE token-by-token streaming                     │
+└────────────┬──────────────────────────┬─────────────────────────┘
+             │ gRPC :8001               │ GPU (cuda:0)
+┌────────────▼────────────┐  ┌──────────▼───────────────────────┐
+│  NVIDIA Triton Server   │  │  TinyLlama-1.1B-Chat             │
+│  legal_embedding (ONNX) │  │  HuggingFace Transformers        │
+│  GPU batching, dynamic  │  │  torch.float16, device_map=auto  │
+│  batching, CUDA accel.  │  │  TextIteratorStreamer             │
+└─────────────────────────┘  └──────────────────────────────────┘
+             │
+┌────────────▼────────────┐
+│  FAISS GPU IVF Index    │
+│  ~384-dim embeddings    │
+│  faiss-gpu-cu12         │
+└─────────────────────────┘
 ```
 
-Using npm:
+---
 
-```sh
-npm install @chatscope/chat-ui-kit-react
+## Hardware Requirements
+
+| Component | Minimum | Used in this project |
+|---|---|---|
+| GPU | NVIDIA with CUDA ≥ 11.8 | RTX 3060 12GB |
+| VRAM | 8GB | 12GB |
+| RAM | 16GB | - |
+| Storage | 10GB | - |
+| CUDA Driver | 520+ | 580 (CUDA 13.0) |
+
+---
+
+## Quick Start
+
+### 1. Prerequisites
+
+```bash
+# Check GPU
+nvidia-smi
+
+# Install nvidia-container-toolkit (for Docker GPU access)
+sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker
+sudo systemctl restart docker
 ```
 
-**Styles**
+### 2. Run the pipeline scripts (one-time setup)
 
-Using yarn:
+```bash
+# Install Python dependencies
+pip install -r backend/requirements.txt
 
-```sh
-yarn add @chatscope/chat-ui-kit-styles
+# Step 1: Download the legal corpus (~480MB)
+python scripts/download_dataset.py
+
+# Step 2: Fine-tune the embedding model (~2-4 hours)
+python scripts/finetune_embeddings.py
+
+# Step 3: Export to ONNX for Triton
+python scripts/export_to_onnx.py
+
+# Step 4: Start Triton (needed for index building)
+docker compose up triton -d
+
+# Step 5: Build the FAISS index
+python scripts/build_faiss_index.py
 ```
 
-Using npm:
+### 3. Start with Docker Compose
 
-```sh
-npm install @chatscope/chat-ui-kit-styles
+```bash
+docker compose up --build
 ```
 
-## Usage
+| Service | URL | Purpose |
+|---|---|---|
+| Frontend | http://localhost:3000 | React chat UI |
+| Backend | http://localhost:8000 | FastAPI RAG API |
+| Triton Metrics | http://localhost:8002/metrics | GPU inference stats |
 
-### ESM
+### 4. Development (without Docker)
 
-```jsx
-import styles from "@chatscope/chat-ui-kit-styles/dist/default/styles.min.css";
-import {
-  MainContainer,
-  ChatContainer,
-  MessageList,
-  Message,
-  MessageInput,
-} from "@chatscope/chat-ui-kit-react";
+```bash
+# Terminal 1 — Frontend
+cd frontend && npm run dev       # → http://localhost:3000
 
-<div style={{ position: "relative", height: "500px" }}>
-  <MainContainer>
-    <ChatContainer>
-      <MessageList>
-        <Message
-          model={{
-            message: "Hello my friend",
-            sentTime: "just now",
-            sender: "Joe",
-          }}
-        />
-      </MessageList>
-      <MessageInput placeholder="Type message here" />
-    </ChatContainer>
-  </MainContainer>
-</div>;
+# Terminal 2 — Backend
+cd backend && uvicorn main:app --reload --port 8000
+
+# Terminal 3 — Triton (requires Docker)
+docker compose up triton
 ```
 
-Yeah! Your first chat GUI is ready!
+---
 
-### UMD
+## Project Structure
 
-UMD usage is documented in our [Storybook](https://chatscope.io/storybook/react/).
+```
+chat-ui-kit-react/              ← chatscope component library (source)
+├── src/                        ← UI kit components (DO NOT MODIFY)
+├── dist/                       ← Built library (es + cjs)
+│
+├── frontend/                   ← Vite React app
+│   ├── src/
+│   │   ├── App.jsx             ← Root layout
+│   │   ├── index.css           ← Dark legal theme
+│   │   ├── components/
+│   │   │   ├── ChatPanel.jsx   ← chatscope message list/input
+│   │   │   └── DocumentPanel.jsx  ← drag-and-drop upload
+│   │   ├── hooks/
+│   │   │   └── useChat.js      ← SSE streaming state hook
+│   │   └── api/
+│   │       └── index.js        ← FastAPI client
+│   └── vite.config.js
+│
+├── backend/                    ← FastAPI server
+│   ├── main.py                 ← /upload /ask /health /sources /clear
+│   ├── rag_pipeline.py         ← FAISS retrieval + TinyLlama generation
+│   ├── triton_client.py        ← gRPC Triton embedder
+│   ├── requirements.txt
+│   └── tests/
+│       └── test_backend.py
+│
+├── triton/
+│   └── model_repository/
+│       └── legal_embedding/
+│           ├── config.pbtxt    ← GPU batching config
+│           └── 1/
+│               └── model.onnx  ← (generated by export_to_onnx.py)
+│
+├── scripts/
+│   ├── download_dataset.py     ← pile-of-law r_legaladvice ~480MB
+│   ├── finetune_embeddings.py  ← sentence-transformers fine-tuning
+│   ├── export_to_onnx.py       ← HF → ONNX export
+│   ├── build_faiss_index.py    ← GPU FAISS IVF index builder
+│   └── export_docker.sh        ← Docker save + RAR + Hub push
+│
+├── data/                       ← legal_corpus.jsonl, faiss.index, metadata.pkl
+├── models/legal-minilm/        ← fine-tuned embedding model
+├── docs/                       ← software paper sections
+│
+├── docker-compose.yml          ← 3-service GPU stack
+├── Dockerfile.frontend
+├── Dockerfile.backend
+└── README.md
+```
 
-## Documentation
+---
 
-Check our friendly [Storybook](https://chatscope.io/storybook/react/).
+## API Reference
 
-## Typescript
+### `POST /upload`
+Upload a PDF or TXT file for indexing.
 
-The library is written in Javascript, but Typescript typings are available in the package since version 1.9.3.
+```json
+// Response
+{ "doc_id": "abc12345", "name": "contract.pdf", "chunks_indexed": 42 }
+```
 
-## See also
+### `POST /ask`
+Ask a question against the indexed documents.
 
-[@chatscope/use-chat](https://github.com/chatscope/use-chat) is a React hook for state management in chat applications.  
-Check it out and see how easy you can do the chat logic yourself.
+```json
+// Request
+{ "query": "What are the tenant's obligations under this lease?", "top_k": 5 }
 
-## Show your support
+// Response
+{
+  "answer": "Under the lease, the tenant is obligated to...",
+  "sources": [
+    { "text": "...", "source": "contract.pdf", "score": 0.912 }
+  ],
+  "query": "What are the tenant's obligations..."
+}
+```
 
-If you've made an awesome chat UI and you love this library, please ⭐ this repository!
+### `POST /ask/stream`
+Same as `/ask` but returns Server-Sent Events for token streaming.
 
-## Community and support
+### `GET /health`
+```json
+{ "status": "ok", "triton": true, "llm": true }
+```
 
-- Twitting via [@chatscope](https://twitter.com/chatscope)
-- Chatting at [Discord](https://discord.gg/TkUYWQRf2M)
-- Facebooking at [Facebook](https://www.facebook.com/chatscope)
-- Articles on the [chatscope blog](https://chatscope.io/blog/)
+---
 
-## Website
+## Dataset
 
-[https://chatscope.io](https://chatscope.io)
+**Source:** `pile-of-law/pile-of-law` — `r_legaladvice` subset  
+**Size:** ~480MB uncompressed (200K Q&A rows)  
+**License:** CC-BY-NC-SA 4.0 (non-commercial research only)  
+**Citation:** Henderson et al. (2022), "Pile of Law", arXiv:2207.00220
+
+---
+
+## Docker Export
+
+```bash
+# Build, export to RAR, and push to Docker Hub
+chmod +x scripts/export_docker.sh
+./scripts/export_docker.sh your-dockerhub-username
+```
+
+---
+
+## Software Paper Reference
+
+This system is documented as a software paper covering:
+1. System Architecture (microservices design)
+2. Dataset & Fine-Tuning Methodology
+3. RAG Pipeline Design
+4. NVIDIA Triton GPU Optimization
+5. Performance Benchmarks (CPU vs GPU inference latency)
+6. Scalability Analysis
+
+See [`docs/paper_outline.md`](docs/paper_outline.md) for the full structure.
+
+---
 
 ## License
 
-[MIT](https://github.com/chatscope/chat-ui-kit-react/blob/master/LICENSE)
+MIT (frontend) · Apache-2.0 (NVIDIA components) · CC-BY-NC-SA 4.0 (dataset)

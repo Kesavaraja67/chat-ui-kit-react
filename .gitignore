@@ -24,4 +24,14 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Project specific
+*.rar
+*.zip
+models/
+data/
+rarlinux*
+.tempmediaStorage/
 .eslintcache
+
+.venv
